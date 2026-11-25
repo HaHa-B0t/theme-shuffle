@@ -1,7 +1,7 @@
 {
   "name": "theme-shuffle",
-  "version": "0.3.0",
-  "description": "Animated backdrops that shuffle every few minutes, the same in every session. Includes Snowdrift, where snow piles up as your context fills. Commands: /theme-shuffle (status), list (pick on a card), now, hold, on, off, <minutes>, light, dark, all, <theme name>.",
+  "version": "0.3.1",
+  "description": "Animated backdrops that shuffle every few minutes, the same in every session. Includes Snowdrift: snow piles up as your context fills.\n\nCommands (/theme-shuffle …):\n• (nothing): show status\n• list: pick a theme on a card\n• now: switch right away\n• hold: keep the current theme\n• on | off: start or stop\n• 10: switch every 10 minutes\n• light | dark | all: which themes\n• snowdrift: jump to a theme by name",
   "license": "Apache-2.0",
   "types": "./types/index.d.ts"
 }
