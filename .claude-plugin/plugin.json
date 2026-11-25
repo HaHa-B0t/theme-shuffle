@@ -1,6 +1,7 @@
 {
   "name": "theme-shuffle",
-  "version": "0.2.0",
-  "description": "Shuffles a random animated backdrop every few minutes, the same one in every session and project.",
-  "license": "Apache-2.0"
+  "version": "0.3.0",
+  "description": "Animated backdrops that shuffle every few minutes, the same in every session. Includes Snowdrift, where snow piles up as your context fills. Commands: /theme-shuffle (status), list (pick on a card), now, hold, on, off, <minutes>, light, dark, all, <theme name>.",
+  "license": "Apache-2.0",
+  "types": "./types/index.d.ts"
 }

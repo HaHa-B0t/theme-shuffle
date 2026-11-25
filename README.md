@@ -4,10 +4,16 @@ Paints a random animated backdrop behind the Claude Code desktop window and swit
 
 The 38 scenes, their glass and their sounds are copied from the `theme-examples` plugin (Apache-2.0, see LICENSE).
 
+It also has themes of its own, in `hooks/custom-themes.ts`:
+
+- **Snowdrift**: night snowfall where the snow piles up as the session's context window fills, burying the pines and the cabin. A robin in a winter hat sits on a wooden sign that shows the context percentage, plus the 5-hour limit when it's known; the numbers turn a warning color past 80%. A snowman appears at 35% and gets a top hat at 65%. Each time the context grows, a skier swoops across the snow once. Each session shows its own level.
+
 ## Use
 
 - `/theme-shuffle`: what it's doing now.
+- `/theme-shuffle list`: opens a card with every theme. **Show** puts one up and lets the shuffle carry on; **Keep** puts it up and holds it. The card also has Shuffle now and Start/Stop shuffle.
 - `/theme-shuffle now`: switch right away.
+- `/theme-shuffle hold`: keep the current theme everywhere; `on` starts shuffling again.
 - `/theme-shuffle 10`: switch every 10 minutes (default 5).
 - `/theme-shuffle light` / `dark` / `all`: only themes made for that kind of window.
 - `/theme-shuffle aurora`: jump to one theme by name; the shuffle carries on from there.
