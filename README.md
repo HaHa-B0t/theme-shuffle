@@ -8,6 +8,10 @@ It also has themes of its own, in `hooks/custom-themes.ts`:
 
 - **Snowdrift**: night snowfall where the snow piles up as the session's context window fills, burying the pines and the cabin. A robin in a winter hat sits on a wooden sign that shows the context percentage, plus the 5-hour limit when it's known; the numbers turn a warning color past 80%. A snowman appears at 35% and gets a top hat at 65%. Each time the context grows, a skier swoops across the snow once. Each session shows its own level.
 
+## Sound
+
+Every theme has a soft ambient sound to match it: surf for the lagoons, a still pond with drips, wind over the dunes, a fire's crackle for Ember, crickets in the night gardens, bells in the snow, a slow pad under the stars. Sending a message and Claude finishing play a quiet two- or three-note cue in the same key. Koi Pond and Falling Sand keep their own sounds from theme-examples; the rest are in `hooks/ambient.ts`. Turn sound on or off with the speaker button at the top of the window.
+
 ## Use
 
 - `/theme-shuffle`: what it's doing now.

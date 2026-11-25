@@ -2,6 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
+import { ambientFor } from './ambient'
 import { CUSTOM_THEMES } from './custom-themes'
 import type { ShuffleTheme } from './custom-themes'
 import { overShader } from './interactive'
@@ -9,7 +10,10 @@ import { THEMES as COPIED, sceneFault, sceneOf } from './themes'
 import type { CardState, LiveUsage } from '../types'
 
 type Theme = ShuffleTheme
-const THEMES: readonly Theme[] = [...CUSTOM_THEMES, ...COPIED]
+// Every theme has a sound: its own where it came with one, else a calm one from ./ambient.
+const THEMES: readonly Theme[] = [...CUSTOM_THEMES, ...COPIED].map(theme =>
+  theme.sound !== undefined ? theme : { ...theme, sound: ambientFor(theme.id) },
+)
 
 const PLUGIN = 'theme-shuffle'
 const COMMAND = 'theme-shuffle'
