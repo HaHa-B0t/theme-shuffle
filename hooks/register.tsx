@@ -3,6 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { ambientFor } from './ambient'
+import { checkClipsOncePerUpdate, engineIo } from './clip-check'
 import { CUSTOM_THEMES } from './custom-themes'
 import type { ShuffleTheme } from './custom-themes'
 import { overShader } from './interactive'
@@ -370,6 +371,8 @@ export const register: Register = on => {
     })
     quietly($, () => sync($))
     quietly($, () => refreshUsage($))
+    // Once per Claude Code update: can sound files play yet? (Silent; tells you once when they can.)
+    quietly($, () => checkClipsOncePerUpdate(engineIo($)))
     return next(e)
   })
 
