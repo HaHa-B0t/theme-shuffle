@@ -6,9 +6,9 @@ export type LiveUsage = { context?: number; fiveHour?: number; ski?: boolean }
 
 /**
  * Where the theme card shows: in the band above the prompt where the surface places no rows, or put away.
- * `preview`: the theme being previewed in this session, whose picture the card shows.
+ * `preview`: the theme being previewed in this session; `left`: its seconds to go.
  */
-export type CardState = { inBand?: boolean; away?: boolean; preview?: string }
+export type CardState = { inBand?: boolean; away?: boolean; preview?: string; left?: number }
 
 declare module 'claude-code' {
   interface PluginState {

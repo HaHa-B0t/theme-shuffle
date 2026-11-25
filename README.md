@@ -11,7 +11,7 @@ It also has themes of its own, in `hooks/custom-themes.ts`:
 ## Use
 
 - `/theme-shuffle`: what it's doing now.
-- `/theme-shuffle list`: opens a card with every theme. **Preview** shows one behind this chat for 20 seconds and its picture at the top of the card. **Apply** puts it up in every session and lets the shuffle carry on. **Hold** puts it up in every session and keeps it there. The card also has Shuffle now and Start/Stop shuffle.
+- `/theme-shuffle list`: opens a card with every theme. **Preview** shows one behind this chat for 20 seconds; the card counts down, and **Stop preview** goes back early. **Apply** puts it up in every session and lets the shuffle carry on. **Hold** puts it up in every session and keeps it there. The card also has Shuffle now and Start/Stop shuffle.
 - `/theme-shuffle now`: switch right away.
 - `/theme-shuffle hold`: keep the current theme everywhere; `on` starts shuffling again.
 - `/theme-shuffle 10`: switch every 10 minutes (default 5).

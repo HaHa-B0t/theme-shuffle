@@ -13,7 +13,7 @@ test('list opens the card and prints no theme list', async ($, on) => {
   expect(text).toBe('Pick a theme on the card.')
 })
 
-test('Preview shows the picture at the top; Hold puts the card away', async ($, on) => {
+test('Preview counts down with Stop preview and no picture; Hold puts the card away', async ($, on) => {
   const set: string[] = []
   const toasts: string[] = []
   const store = new Map<string, unknown>()
@@ -28,7 +28,9 @@ test('Preview shows the picture at the top; Hold puts the card away', async ($, 
     if (scene !== undefined) set.push(scene)
     return { value: { isDrawn: true, requestId: 'backdrop' } }
   })
-  on('clock.after', () => ({ value: {} }))
+  let cleared = 0
+  on('theme.clear', () => { cleared += 1; return { value: { isDrawn: true, requestId: 'clear' } } })
+  on('clock.every', () => ({ value: {} }))
   on('clock.now', () => ({ value: 1_000_000 }))
   on('ui.toast', (_, e) => { toasts.push(String((e as { text?: unknown }).text)); return { value: undefined } })
 
@@ -42,9 +44,14 @@ test('Preview shows the picture at the top; Hold puts the card away', async ($, 
   expect(await ui.find({ type: 'Svg' })).toBeUndefined()
 
   await ui.press({ key: 'preview-snowdrift' })
-  expect((await ui.find({ type: 'Text', text: /Previewing Snowdrift/ }))?.text).toBe('Previewing Snowdrift')
-  expect(await ui.find({ type: 'Svg' })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /Previewing Snowdrift/ }))?.text).toMatch(/^Previewing Snowdrift: back in ([1-9]|1[0-9]|20)s$/)
+  expect(await ui.find({ type: 'Svg' })).toBeUndefined()
   expect((await ui.find({ type: 'Button', key: 'preview-snowdrift' }))?.props.label).toBe('Previewing')
+
+  await ui.press({ key: 'stop-preview' })
+  expect(await ui.find({ type: 'Button', key: 'stop-preview' })).toBeUndefined()
+  // Nothing shared to go back to here, so the preview hands the window back to the app's own look.
+  expect(cleared).toBe(1)
 
   await ui.press({ key: 'hold-aurora' })
   expect(toasts).toEqual(['Holding Aurora in every session.'])
