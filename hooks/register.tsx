@@ -29,6 +29,9 @@ const DEFAULTS: Settings = { on: true, hold: false, minutes: 5, pool: 'all' }
 
 let ticker: Timer | undefined
 let shown: string | undefined
+// While a preview runs: the timer that ends it. Only this session previews; nothing is stored.
+let previewEnding: Timer | undefined
+const PREVIEW_MS = 20_000
 
 // This session's figures for live themes. A write redraws the backdrop that reads it.
 const usage = atom({ plugin: 'theme-shuffle', key: 'usage' } as const, {}, { shape: 'usage-2' })
@@ -102,13 +105,19 @@ async function loadCurrent($: EngineInterface): Promise<Current | undefined> {
 async function show($: EngineInterface, theme: Theme): Promise<void> {
   if (shown === theme.id) return
   const base = {
-    backdrop: { scene: theme.id, glass: theme.glass },
+    // The scene name goes under both names: newer apps read `scene`, older ones `id`.
+    backdrop: { scene: theme.id, id: theme.id, glass: theme.glass },
     overrideColorScheme: theme.window,
   }
   try {
     await $.theme.set(theme.sound === undefined ? base : { ...base, sound: theme.sound })
   } catch {
-    await $.theme.set(base)
+    try {
+      await $.theme.set(base)
+    } catch {
+      // An app that takes no window kind beside the backdrop: the backdrop alone.
+      await $.theme.set({ backdrop: base.backdrop })
+    }
   }
   shown = theme.id
 }
@@ -127,6 +136,8 @@ async function choose($: EngineInterface, settings: Settings, named?: Theme): Pr
  * every session then shows whatever the shared record names.
  */
 async function sync($: EngineInterface): Promise<void> {
+  // A preview owns this session's backdrop until it ends.
+  if (previewEnding !== undefined) return
   const settings = await loadSettings($)
   if (!settings.on) {
     shown = undefined
@@ -173,24 +184,32 @@ async function showEverywhere($: EngineInterface, theme: Theme, hold: boolean): 
   return settings
 }
 
-/** Plain-text list, for surfaces that draw no card. */
-function themeList(): string {
-  const rows = (filter: (t: Theme) => boolean): string =>
-    THEMES.filter(filter)
-      .map(t => `  ${t.id}: ${t.title}`)
-      .join('\n')
-  return [
-    'My themes:',
-    rows(t => CUSTOM_THEMES.includes(t)),
-    'For dark windows:',
-    rows(t => !CUSTOM_THEMES.includes(t) && t.window === 'dark'),
-    'For light windows:',
-    rows(t => !CUSTOM_THEMES.includes(t) && t.window === 'light'),
-    `Pick one with /${COMMAND} <name> (shuffle goes on) or /${COMMAND} <name> then /${COMMAND} hold (keep it).`,
-  ].join('\n')
+type CardElements = Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Box' | 'Text' | 'Button'> & {
+  Svg?: ReturnType<EngineInterface['ui']['resolve']>['Svg']
 }
 
-type CardElements = Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Box' | 'Text' | 'Button'>
+/** Ends a preview: back to the shared theme, and the card's picture cleared. */
+async function endPreview($: EngineInterface): Promise<void> {
+  previewEnding?.cancel()
+  previewEnding = undefined
+  shown = undefined
+  await update($, card, (was: CardState): CardState => ({ ...was, preview: undefined }))
+  const settings = await loadSettings($)
+  const current = themeOf((await loadCurrent($))?.id)
+  if (settings.on && current !== undefined) await show($, current)
+}
+
+/**
+ * Shows a theme behind this session's chat for 20 seconds, and its picture at the top of the card.
+ * It changes nothing for other sessions and stores nothing; a second preview restarts the 20 seconds.
+ */
+async function preview($: EngineInterface, theme: Theme): Promise<void> {
+  previewEnding?.cancel()
+  previewEnding = $.clock.after(PREVIEW_MS, () => quietly($, () => endPreview($)))
+  shown = undefined
+  await show($, theme)
+  await update($, card, (was: CardState): CardState => ({ ...was, preview: theme.id }))
+}
 
 async function putCardAway($: EngineInterface): Promise<void> {
   await update($, card, (): CardState => ({ inBand: false, away: true }))
@@ -198,22 +217,40 @@ async function putCardAway($: EngineInterface): Promise<void> {
 
 /** A pick on the card: the theme shown everywhere, and the card put away, as a menu closes on a choice. */
 async function pickOnCard($: EngineInterface, theme: Theme, hold: boolean): Promise<void> {
+  previewEnding?.cancel()
+  previewEnding = undefined
   try {
     await showEverywhere($, theme, hold)
   } catch (error) {
     void $.ui.toast(`${theme.title} could not be shown: ${String(error)}`)
     return
   }
-  void $.ui.toast(hold ? `Holding ${theme.title} everywhere.` : `${theme.title} now; the shuffle carries on.`)
+  void $.ui.toast(hold ? `Holding ${theme.title} in every session.` : `${theme.title} in every session; the shuffle carries on.`)
   await putCardAway($)
+}
+
+/** A theme's picture, as a still image: its own animation is switched off so the card stays light. */
+function stillOf(theme: Theme, live: LiveUsage): string {
+  const source = theme.live === undefined ? sceneOf(theme) : theme.live(live)
+  return source.replace(/<\/svg>\s*$/, '<style>*{animation:none!important}</style></svg>')
 }
 
 /**
  * The card. Its head holds the shuffle's own buttons, then the themes in three groups.
- * Show puts a theme up and lets the shuffle carry on; Keep puts it up and holds it.
+ * Preview shows a theme here for 20 seconds and puts its picture at the top of the card.
+ * Apply puts it up in every session and lets the shuffle carry on; Hold puts it up and keeps it.
  * The desktop draws a button's `label` and never its children, so both carry the same short word.
+ * Only one picture at a time: a scene is up to about 124,000 characters, past what one card may draw many times over.
  */
-function cardView($: EngineInterface, { Box, Text, Button }: CardElements, settings: Settings, currentId: string | undefined) {
+function cardView(
+  $: EngineInterface,
+  { Box, Text, Button, Svg }: CardElements,
+  settings: Settings,
+  currentId: string | undefined,
+  state: CardState,
+  live: LiveUsage,
+) {
+  const previewing = themeOf(state.preview)
   const groups: { key: string; head: string; themes: Theme[] }[] = [
     { key: 'mine', head: 'My themes', themes: [...CUSTOM_THEMES] },
     { key: 'dark', head: 'For dark windows', themes: COPIED.filter(t => t.window === 'dark') },
@@ -257,6 +294,16 @@ function cardView($: EngineInterface, { Box, Text, Button }: CardElements, setti
         </Button>
       </Box>
       <Text dimColor>{describe(settings, themeOf(currentId))}</Text>
+      {previewing === undefined
+        ? [<Text key="hint" dimColor>Press Preview on a theme to see it here and behind the chat for 20 seconds.</Text>]
+        : [
+            <Box key="picture" flexDirection="column" gap="xs">
+              <Text bold>{`Previewing ${previewing.title}`}</Text>
+              {Svg === undefined
+                ? []
+                : [<Svg key="still" source={stillOf(previewing, live)} alt={`${previewing.title}: ${previewing.blurb}`} width={320} height={200} />]}
+            </Box>,
+          ]}
       {groups.map(group => (
         <Box key={`group-${group.key}`} flexDirection="column" gap="md">
           <Text key={`head-${group.key}`} size="heading" bold>
@@ -272,11 +319,18 @@ function cardView($: EngineInterface, { Box, Text, Button }: CardElements, setti
                     {theme.title}
                   </Text>
                   <Box flexDirection="row" gap={1}>
-                    <Button key={`show-${theme.id}`} label="Show" onPress={() => pickOnCard($, theme, false)}>
-                      Show
+                    <Button
+                      key={`preview-${theme.id}`}
+                      label={state.preview === theme.id ? 'Previewing' : 'Preview'}
+                      onPress={() => preview($, theme)}
+                    >
+                      {state.preview === theme.id ? 'Previewing' : 'Preview'}
                     </Button>
-                    <Button key={`keep-${theme.id}`} label="Keep" onPress={() => pickOnCard($, theme, true)}>
-                      Keep
+                    <Button key={`apply-${theme.id}`} label="Apply" onPress={() => pickOnCard($, theme, false)}>
+                      Apply
+                    </Button>
+                    <Button key={`hold-${theme.id}`} label="Hold" onPress={() => pickOnCard($, theme, true)}>
+                      Hold
                     </Button>
                   </Box>
                 </Box>
@@ -365,13 +419,13 @@ export const register: Register = on => {
     if (e.props.plugin !== PLUGIN || e.props.id !== CARD) return next(e)
     const state: CardState = await read($, card)
     if (state.away === true) return next(e)
-    return cardView($, $.ui.resolve(e), await loadSettings($), (await loadCurrent($))?.id)
+    return cardView($, $.ui.resolve(e), await loadSettings($), (await loadCurrent($))?.id, state, await read($, usage))
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const state: CardState = await read($, card)
     if (state.inBand !== true) return next(e)
-    return cardView($, $.ui.resolve(e), await loadSettings($), (await loadCurrent($))?.id)
+    return cardView($, $.ui.resolve(e), await loadSettings($), (await loadCurrent($))?.id, state, await read($, usage))
   })
 
   on('command.run', { command: COMMAND }, async ($, e) => {
@@ -384,7 +438,7 @@ export const register: Register = on => {
       // A surface that places no rows gets the card above the prompt instead.
       const placed = await $.ui.place({ id: CARD })
       await update($, card, (): CardState => ({ inBand: !placed.isPlaced, away: false }))
-      return { text: `Pick a theme on the card.\n${themeList()}` }
+      return { text: 'Pick a theme on the card.' }
     }
 
     const named = themeNamed(word)
