@@ -1,0 +1,6 @@
+{
+  "name": "theme-shuffle",
+  "version": "0.2.0",
+  "description": "Shuffles a random animated backdrop every few minutes, the same one in every session and project.",
+  "license": "Apache-2.0"
+}

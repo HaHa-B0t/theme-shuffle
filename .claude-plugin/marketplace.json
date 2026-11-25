@@ -1,0 +1,5 @@
+{
+  "name": "theme-shuffle",
+  "owner": { "name": "HaHa-B0t" },
+  "plugins": [{ "name": "theme-shuffle", "source": "./" }]
+}
