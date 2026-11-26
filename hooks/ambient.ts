@@ -47,25 +47,45 @@ const ticks = (scatter: number, gain: number, hz = 3000, release = 0.03): Layer 
   filter: { type: 'highpass', hz },
 })
 
-/** Soft cues on the theme's own notes: two rising notes when you send, a slow chord when Claude is done. */
-function cues(scale: string[], wave: 'sine' | 'bell' | 'triangle' = 'sine', room = 0.35) {
-  const [a = 'C5', b = 'E5', c = 'G5', d = 'C6'] = scale
+/**
+ * Soft cues on the theme's own chord (root, third, fifth): two rising notes when you send, a warm open fifth with a
+ * light third on top when Claude is done, a falling pair when Claude asks, and a low soft thud on an error. No tool
+ * cue: tool calls come too often for a sound.
+ */
+function cues(chord: string[], wave: 'sine' | 'bell' | 'triangle' = 'sine', room = 0.35) {
+  const [root = 'C5', third = 'E5', fifth = 'G5'] = chord
+  // The root an octave down (never below octave 2), for the error's low note.
+  const low = root.replace(/(\d)$/, (_m, o: string) => String(Math.max(2, Number(o) - 1)))
   return {
-    send: { reverb: room * 0.6, layers: [{ wave, notes: [a, c], step: 0.09, attack: 0.004, release: 0.25, gain: 0.22 }] },
+    send: { reverb: room * 0.6, layers: [{ wave, notes: [root, fifth], step: 0.09, attack: 0.004, release: 0.25, gain: 0.22 }] },
     done: {
       reverb: room,
       layers: [
-        { wave, notes: [a, b, c], step: 0.14, attack: 0.01, release: 1.4, gain: 0.2 },
-        { wave: 'sine', notes: [d], attack: 0.3, release: 2, gain: 0.08 },
+        { wave: 'sine', notes: [root, fifth], attack: 0.06, release: 1.2, gain: 0.16, filter: { type: 'lowpass', hz: 1200 } },
+        { wave, notes: [third], attack: 0.004, release: 0.25, gain: 0.1 },
       ],
     },
-    ask: { reverb: room * 0.6, layers: [{ wave, notes: [c, b], step: 0.16, attack: 0.006, release: 0.5, gain: 0.2 }] },
+    ask: { reverb: room * 0.6, layers: [{ wave, notes: [fifth, third], step: 0.16, attack: 0.006, release: 0.5, gain: 0.2 }] },
+    error: {
+      reverb: room * 0.5,
+      layers: [
+        { wave: 'sine', notes: [low], glide: -7, attack: 0.006, release: 0.4, gain: 0.22, filter: { type: 'lowpass', hz: 900 } },
+        { wave: 'brown', attack: 0.004, release: 0.2, gain: 0.12, filter: { type: 'lowpass', hz: 500 } },
+      ],
+    },
   }
 }
 
-function sound(ambience: Layer[], reverb: number, scale: string[], wave?: 'sine' | 'bell' | 'triangle'): Sound {
-  return { ambience: { reverb, layers: ambience }, cues: cues(scale, wave, Math.min(0.6, reverb + 0.1)) } as unknown as Sound
+function sound(ambience: Layer[], reverb: number, chord: string[], wave?: 'sine' | 'bell' | 'triangle'): Sound {
+  return { ambience: { reverb, layers: ambience }, cues: cues(chord, wave, Math.min(0.6, reverb + 0.1)) } as unknown as Sound
 }
+
+// Chords for the cues: root, third, fifth of each sound's key.
+const C_CHORD = ['C5', 'E5', 'G5']
+const D_CHORD = ['D5', 'F#5', 'A5']
+const G_CHORD = ['G4', 'B4', 'D5']
+const AM_CHORD = ['A4', 'C5', 'E5']
+const F_CHORD = ['F4', 'A4', 'C5']
 
 // Scales: pentatonic, so any notes that fall together still sound calm.
 const C_PENTA = ['C5', 'D5', 'E5', 'G5', 'A5', 'C6']
@@ -82,7 +102,7 @@ const SHORE = sound(
     notes('sine', D_PENTA, 0.08, 0.1, 1.6),
   ],
   0.35,
-  D_PENTA,
+  D_CHORD,
 )
 
 /** Under the surface: a deep hush, slow bubbles rising, a whale-low pad far off. */
@@ -93,7 +113,7 @@ const UNDERWATER = sound(
     notes('sine', ['A5', 'B5', 'D6', 'E6'], 0.25, 0.08, 0.15, 7),
   ],
   0.55,
-  ['D4', 'F#4', 'A4', 'D5'],
+  ['D4', 'F#4', 'A4'],
 )
 
 /** A still pond: soft water, a drip now and then, birds far away. */
@@ -104,7 +124,7 @@ const POND = sound(
     notes('sine', ['E6', 'G6', 'A6'], 0.05, 0.06, 0.4, 3, 0.6),
   ],
   0.3,
-  G_PENTA,
+  G_CHORD,
 )
 
 /** A breeze through leaves, a few birds, insects at the edge of hearing. */
@@ -115,7 +135,7 @@ const GARDEN = sound(
     { wave: 'sine', notes: ['E7'], scatter: 0.3, attack: 0.002, release: 0.05, gain: 0.025, tremolo: { hz: 18, depth: 0.8 }, pan: 0.5 },
   ],
   0.25,
-  G_PENTA,
+  G_CHORD,
 )
 
 /** Night garden: crickets and a slow warm pad. */
@@ -127,35 +147,35 @@ const NIGHT_GARDEN = sound(
     wash('pink', 600, 900, 0.12, 0.05),
   ],
   0.35,
-  G_PENTA,
+  G_CHORD,
 )
 
 /** Dawn: a soft rising pad and the first birds. */
 const DAWN = sound(
   [pad(['C4', 'G4', 'E5'], 0.14, 'sine', 1400, 0.05), notes('sine', ['G6', 'A6', 'C7', 'E7'], 0.1, 0.05, 0.2, 5), wash('pink', 700, 1200, 0.12)],
   0.4,
-  C_PENTA,
+  C_CHORD,
 )
 
 /** Dusk: the same pad, lower and warmer, and evening's first crickets. */
 const DUSK = sound(
   [pad(['A3', 'E4', 'C5'], 0.15, 'triangle', 900, 0.05), notes('bell', A_MINOR, 0.06, 0.07, 2), { wave: 'sine', notes: ['B6'], scatter: 0.3, attack: 0.003, release: 0.08, gain: 0.02, tremolo: { hz: 22, depth: 0.9 } }],
   0.45,
-  A_MINOR,
+  AM_CHORD,
 )
 
 /** Desert wind: a hollow gust that comes and goes, sand hissing on the crest. */
 const DUNES = sound(
   [wash('pink', 250, 700, 0.5, 0.06, 0.6), wash('white', 3500, 5000, 0.05, 0.11, 0.7), pad(['D3', 'A3'], 0.07, 'sine', 500)],
   0.4,
-  ['D4', 'F4', 'A4', 'D5'],
+  ['D4', 'F4', 'A4'],
 )
 
 /** Falling snow: a hushed wind and tiny bells, like ice in the branches. */
 export const SNOW = sound(
   [wash('pink', 500, 1100, 0.32, 0.05, 0.45), notes('bell', ['E6', 'G6', 'A6', 'B6', 'D7'], 0.15, 0.05, 2.2), pad(['E3', 'B3'], 0.07, 'sine', 600)],
   0.5,
-  ['E5', 'G5', 'B5', 'E6'],
+  ['E5', 'G5', 'B5'],
   'bell',
 )
 
@@ -163,7 +183,7 @@ export const SNOW = sound(
 const STARS = sound(
   [pad(['F3', 'C4', 'A4'], 0.13, 'sine', 900, 0.04), notes('bell', F_PENTA.map(n => n.replace('4', '6').replace('5', '6')), 0.08, 0.06, 2.8)],
   0.6,
-  F_PENTA,
+  F_CHORD,
   'bell',
 )
 
@@ -171,7 +191,7 @@ const STARS = sound(
 const AURORA = sound(
   [pad(['D3', 'A3', 'E4', 'F#4'], 0.14, 'triangle', 1000, 0.06), wash('pink', 400, 1400, 0.16, 0.04, 0.5), notes('bell', ['A5', 'B5', 'D6', 'E6'], 0.05, 0.05, 3)],
   0.6,
-  D_PENTA,
+  D_CHORD,
   'bell',
 )
 
@@ -179,49 +199,49 @@ const AURORA = sound(
 const FIRE = sound(
   [ticks(4, 0.12, 1800, 0.04), rumble(220, 0.35, 0.09), pad(['A2', 'E3'], 0.08, 'sine', 400)],
   0.2,
-  A_MINOR,
+  AM_CHORD,
 )
 
 /** Drifting clouds: airy wind and a slow open chord. */
 const CLOUDS = sound(
   [wash('pink', 600, 1500, 0.3, 0.04, 0.5), pad(['C4', 'G4', 'D5'], 0.1, 'sine', 1100, 0.04)],
   0.5,
-  C_PENTA,
+  C_CHORD,
 )
 
 /** Mountains at night: a deep drone, wind on the ridge, an echoing note far away. */
 const RANGE = sound(
   [rumble(300, 0.3, 0.05), wash('pink', 350, 800, 0.18, 0.05), notes('triangle', ['A3', 'E4', 'A4'], 0.04, 0.08, 3)],
   0.65,
-  A_MINOR,
+  AM_CHORD,
 )
 
 /** A quiet station late at night: a soft hall hum and the board's flaps settling. */
 const STATION = sound(
   [rumble(400, 0.25, 0.04), ticks(1.5, 0.08, 2200, 0.025), pad(['F3', 'C4'], 0.06, 'sine', 600)],
   0.45,
-  F_PENTA,
+  F_CHORD,
 )
 
 /** A drafting room: paper, a pen scratching now and then, a soft pad. */
 const STUDIO = sound(
   [wash('pink', 1500, 2500, 0.08, 0.1, 0.4), ticks(0.8, 0.06, 4000, 0.06), pad(['C4', 'G4'], 0.08, 'sine', 900)],
   0.3,
-  C_PENTA,
+  C_CHORD,
 )
 
 /** A magnetic field: a low even hum that breathes. */
 const HUM = sound(
   [pad(['C3', 'G3', 'C4'], 0.13, 'sine', 600, 0.05), notes('sine', ['G5', 'C6', 'D6'], 0.05, 0.05, 2)],
   0.45,
-  C_PENTA,
+  C_CHORD,
 )
 
 /** Small creatures at play: soft wood taps and a light pad. */
 const PLAYFUL = sound(
   [pad(['D4', 'A4'], 0.08, 'sine', 900), notes('triangle', D_PENTA, 0.25, 0.06, 0.2), wash('pink', 800, 1200, 0.08)],
   0.25,
-  D_PENTA,
+  D_CHORD,
   'triangle',
 )
 

@@ -3,7 +3,11 @@
 import type { Theme } from './themes'
 import type { LiveUsage } from '../types'
 
-export type ShuffleTheme = Theme & { live?: (usage: LiveUsage) => string }
+/** `live` gets the session's figures and the clock (ms), so time-based parts pick up where they were on a redraw. */
+export type ShuffleTheme = Theme & { live?: (usage: LiveUsage, nowMs?: number) => string }
+
+// How long the skier's run lasts; the same 9 s is in the .s-ski rule below.
+const SKI_MS = 9000
 
 const W = 1600
 const H = 1000
@@ -115,10 +119,11 @@ function snowman(x: number, base: number, hat: boolean): string {
 /**
  * A skier who swoops once across the snow, left to right, when the context just grew.
  * Its resting place is off the left edge, so with motion reduced nothing stands in the scene.
+ * `ageMs`: how far into the run this redraw is, so a redraw mid-run carries on instead of starting over.
  */
-function skier(ground: number): string {
+function skier(ground: number, ageMs: number): string {
   return (
-    `<g transform="translate(-140 ${r1(ground - 6)})"><g class="s-ski">` +
+    `<g transform="translate(-140 ${r1(ground - 6)})"><g class="s-ski" style="animation-delay:-${r1(ageMs / 1000)}s">` +
     `<circle cx="-30" cy="-6" r="7" fill="#ffffff" opacity="0.55"/><circle cx="-44" cy="-12" r="5" fill="#ffffff" opacity="0.4"/><circle cx="-56" cy="-4" r="4" fill="#ffffff" opacity="0.3"/>` +
     `<path d="M-26 2L44 2Q52 2 54 -4" stroke="#1d2433" stroke-width="4" fill="none" stroke-linecap="round"/>` +
     `<path d="M-8 -2L2 -26L16 -22L10 -2" fill="#2f4f8f"/>` +
@@ -132,12 +137,23 @@ function skier(ground: number): string {
 }
 
 /** Snowdrift: night snowfall whose ground snow rises with the context window. */
-export function snowdriftSvg(usage: LiveUsage): string {
+export function snowdriftSvg(usage: LiveUsage, nowMs?: number): string {
+  const known = usage.context !== undefined
   const pct = clamp(Math.round(usage.context ?? 0), 0, 100)
   const fill = pct / 100
-  // The snow line climbs from near the bottom; at 100% it reaches the cabin's roof peak and only the chimney shows.
-  const ground = H - (40 + fill * 230)
-  const warn = pct >= 80
+  // The snow line climbs from 900 (inside a 16:9 crop) to 700 at 100%, burying the cabin walls and eaves so only the roof peak and chimney show.
+  const ground = 900 - fill * 200
+  const warn = known && pct >= 80
+  // The skier runs for SKI_MS after the context last grew, and never on an unrelated redraw later.
+  const skiAge = usage.skiAt === undefined || nowMs === undefined ? Infinity : nowMs - usage.skiAt
+  // With the clock known, the endless loops resume at the same phase on every redraw instead of jumping back to the start.
+  const t = nowMs === undefined ? undefined : nowMs / 1000
+  const phase =
+    t === undefined
+      ? ''
+      : `.s-fall-a{animation-delay:-${r1(t % 60)}s}.s-fall-b{animation-delay:-${r1(t % 42)}s}` +
+        `.s-fall-c{animation-delay:-${r1(t % 30)}s}.s-sway{animation-delay:-${r1(t % 28)}s}` +
+        `.s-bob{animation-delay:-${r1(t % 5)}s}.s-glow{animation-delay:-${r1(t % 7)}s}`
   const signText = warn ? '#ffc2a8' : '#fff1d6'
   const five = usage.fiveHour === undefined ? '' : `${Math.round(usage.fiveHour)}%`
 
@@ -174,12 +190,13 @@ export function snowdriftSvg(usage: LiveUsage): string {
     `</g>`
 
   const boardSnow = 4 + fill * 16
+  // Moved right of the left edge, so a narrow (half-snapped) window's crop keeps it in view.
   const sign =
-    `<g>` +
+    `<g transform="translate(150 0)">` +
     `<rect x="150" y="300" width="14" height="${H - 300}" fill="#4a3022"/>` +
     `<rect x="56" y="200" width="204" height="${five ? 150 : 118}" rx="10" fill="#6b4428" stroke="#3e2617" stroke-width="5"/>` +
     `<path d="M52 204Q158 ${r1(196 - boardSnow)} 264 204L264 ${r1(206 + boardSnow * 0.4)}Q158 ${r1(212)} 52 ${r1(206 + boardSnow * 0.4)}Z" fill="#eef3fb"/>` +
-    `<text x="158" y="272" text-anchor="middle" font-family="sans-serif" font-weight="700" font-size="54" fill="${signText}">${pct}%</text>` +
+    `<text x="158" y="272" text-anchor="middle" font-family="sans-serif" font-weight="700" font-size="54" fill="${known ? signText : '#e9d6b4'}">${known ? `${pct}%` : '—'}</text>` +
     `<text x="158" y="302" text-anchor="middle" font-family="sans-serif" font-size="20" letter-spacing="2" fill="#e9d6b4">CONTEXT</text>` +
     (five
       ? `<text x="158" y="336" text-anchor="middle" font-family="sans-serif" font-size="20" fill="#e9d6b4">5h limit ${five}</text>`
@@ -211,6 +228,7 @@ export function snowdriftSvg(usage: LiveUsage): string {
     `@keyframes sd-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}` +
     `.s-ski{animation:sd-ski 9s ease-in-out 1 forwards}` +
     `@keyframes sd-ski{from{transform:translateX(0)}to{transform:translateX(${W + 300}px)}}` +
+    phase +
     `</style>` +
     `<rect width="${W}" height="${H}" fill="url(#sd-sky)"/>` +
     stars +
@@ -228,9 +246,9 @@ export function snowdriftSvg(usage: LiveUsage): string {
     drift(ground - 18, 10, 1.3, '#b9c7e3') +
     drift(ground, 14, 0.2, '#eaf0fa') +
     // The snowman is built once the snow is deep enough (35%), and dressed up with a hat at 65%.
-    (pct >= 35 ? snowman(370, ground + 8, pct >= 65) : '') +
-    robin(196, 188) +
-    (usage.ski === true ? skier(ground) : '') +
+    (pct >= 35 ? snowman(500, ground + 8, pct >= 65) : '') +
+    robin(346, 188) +
+    (skiAge >= 0 && skiAge < SKI_MS ? skier(ground, skiAge) : '') +
     `<g class="s-sway"><g class="s-fall s-fall-b">${flakes(23, 55, 2.4, 1)}</g></g>` +
     `<g class="s-fall s-fall-c">${flakes(37, 30, 3.4, 1)}</g>` +
     `</svg>`

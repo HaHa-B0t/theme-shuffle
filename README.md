@@ -10,17 +10,17 @@ It also has themes of its own, in `hooks/custom-themes.ts`:
 
 ## Sound
 
-Every theme has a soft ambient sound to match it: surf for the lagoons, a still pond with drips, wind over the dunes, a fire's crackle for Ember, crickets in the night gardens, bells in the snow, a slow pad under the stars. Sending a message and Claude finishing play a quiet two- or three-note cue in the same key. Koi Pond and Falling Sand keep their own sounds from theme-examples; the rest are in `hooks/ambient.ts`. Turn sound on or off with the speaker button at the top of the window.
+Every theme has a soft ambient sound to match it: surf for the lagoons, a still pond with drips, wind over the dunes, a fire's crackle for Ember, crickets in the night gardens, bells in the snow, a slow pad under the stars. Sending a message, Claude finishing and Claude asking play quiet cues on the theme's own chord, and an error plays a low, soft thud. Koi Pond and Falling Sand keep their own sounds from theme-examples; the rest are in `hooks/ambient.ts`. Turn sound on or off with the speaker button at the top of the window.
 
 ## Use
 
-- `/theme-shuffle`: what it's doing now.
-- `/theme-shuffle list`: opens a card with every theme. **Preview** shows one behind this chat for 20 seconds; the card counts down, and **Stop preview** goes back early. **Apply** puts it up in every session and lets the shuffle carry on. **Hold** puts it up in every session and keeps it there. The card also has Shuffle now and Start/Stop shuffle.
+- `/theme-shuffle`: what it's doing now, and about when the next switch is.
+- `/theme-shuffle list`: opens a card with every theme at the end of the chat ("Theme shuffle card is open below."). **Preview** shows one behind this chat for 20 seconds; the card counts down, and **Stop preview** (or Close) goes back early. **Apply** puts it up in every session and lets the shuffle carry on. **Hold** puts it up in every session and keeps it there. The card also has Shuffle now and Start/Stop shuffle.
 - `/theme-shuffle now`: switch right away.
-- `/theme-shuffle hold`: keep the current theme everywhere; `on` starts shuffling again.
+- `/theme-shuffle hold`: keep the theme that's up now everywhere (even when shuffle was off); `on` starts shuffling again.
 - `/theme-shuffle 10`: switch every 10 minutes (default 5).
 - `/theme-shuffle light` / `dark` / `all`: only themes made for that kind of window.
-- `/theme-shuffle aurora`: jump to one theme by name; the shuffle carries on from there.
+- `/theme-shuffle aurora`: jump to one theme by name; the shuffle carries on from there. The start of a name works when only one theme matches (`aur`); otherwise it suggests the closest few.
 - `/theme-shuffle off` / `on`: stop or start. Off keeps the current backdrop.
 
 ## With theme-examples

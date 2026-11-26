@@ -7,10 +7,34 @@ const CARD = {
   props: { plugin: 'theme-shuffle', id: 'theme-shuffle-card' },
 } as const
 
-test('list opens the card and prints no theme list', async ($, on) => {
+test('list opens the card with its own wording and prints no theme list', async ($, on) => {
   on('ui.place', () => ({ value: { isPlaced: true, requestId: 'card' } }))
   const { text } = await $.command.run({ command: 'theme-shuffle', args: 'list' })
-  expect(text).toBe('Pick a theme on the card.')
+  expect(text).toBe('Theme shuffle card is open below.')
+})
+
+test('a second list places a fresh row, and only the newest row draws the card', async ($, on) => {
+  const ids: string[] = []
+  on('ui.place', (_, e) => {
+    ids.push(String((e as { id: unknown }).id))
+    return { value: { isPlaced: true, requestId: `r${ids.length}` } }
+  })
+  on('ui.render', ($$, e) => {
+    const { Box } = $$.ui.resolve(e)
+    return <Box key="none" />
+  })
+  await $.command.run({ command: 'theme-shuffle', args: 'list' })
+  // Row ids carry a time stamp; wait a moment so the second differs.
+  await new Promise(resolve => setTimeout(resolve, 5))
+  await $.command.run({ command: 'theme-shuffle', args: 'list' })
+  expect(ids.length).toBe(2)
+  expect(ids[0]).not.toBe(ids[1])
+  const old = await $.ui.mount({ ...CARD, props: { plugin: 'theme-shuffle', id: ids[0] as string } })
+  expect(await old.find({ type: 'Button', key: 'close' })).toBeUndefined()
+  await old.unmount()
+  const fresh = await $.ui.mount({ ...CARD, props: { plugin: 'theme-shuffle', id: ids[1] as string } })
+  expect(await fresh.find({ type: 'Button', key: 'close' })).toBeDefined()
+  await fresh.unmount()
 })
 
 test('Preview counts down with Stop preview and no picture; Hold puts the card away', async ($, on) => {

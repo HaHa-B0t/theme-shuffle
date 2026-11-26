@@ -8,7 +8,7 @@ import { CUSTOM_THEMES } from './custom-themes'
 import type { ShuffleTheme } from './custom-themes'
 import { overShader } from './interactive'
 import { THEMES as COPIED, sceneFault, sceneOf } from './themes'
-import type { CardState, LiveUsage } from '../types'
+import type { CardState, LastTheme, LiveUsage } from '../types'
 
 type Theme = ShuffleTheme
 // Every theme has a sound: its own where it came with one, else a calm one from ./ambient.
@@ -37,17 +37,17 @@ let shown: string | undefined
 // While a preview runs: the one-second timer that counts it down. Only this session previews; nothing is stored.
 let previewEnding: Timer | undefined
 const PREVIEW_SECONDS = 20
-// The last theme put up in this session outside a preview, by any plugin: what a preview goes back to when shuffle is off.
-let lastSet: Parameters<EngineInterface['theme']['set']>[0] | undefined
 
 // This session's figures for live themes. A write redraws the backdrop that reads it.
-const usage = atom({ plugin: 'theme-shuffle', key: 'usage' } as const, {}, { shape: 'usage-2' })
+const usage = atom({ plugin: 'theme-shuffle', key: 'usage' } as const, {}, { shape: 'usage-3' })
 // Where the theme card shows. A write redraws the card.
 const card = atom({ plugin: 'theme-shuffle', key: 'card' } as const, {}, { shape: 'card-2' })
+// What a preview goes back to when shuffle is off. Session state, so it survives a hot reload (a module variable would not).
+const last = atom({ plugin: 'theme-shuffle', key: 'last' } as const, {}, { shape: 'last-1' })
 
 /**
  * Reads the context window and the 5-hour limit, and stores them only when a whole percent changed.
- * `ski` marks the update where the context grew, so Snowdrift's skier runs once for it.
+ * `skiAt` stamps the update where the context grew, so Snowdrift's skier crosses once, then only on the next growth.
  */
 async function refreshUsage($: EngineInterface): Promise<void> {
   const now = await $.session.usage()
@@ -61,7 +61,8 @@ async function refreshUsage($: EngineInterface): Promise<void> {
     fiveHour: fiveHour === undefined ? undefined : Math.round(fiveHour),
   }
   if (was.context === next.context && was.fiveHour === next.fiveHour) return
-  next.ski = was.context !== undefined && next.context !== undefined && next.context > was.context
+  const grew = was.context !== undefined && next.context !== undefined && next.context > was.context
+  next.skiAt = grew ? await $.clock.now() : was.skiAt
   await update($, usage, () => next)
 }
 
@@ -78,22 +79,47 @@ function themeNamed(text: string): Theme | undefined {
   return THEMES.find(theme => theme.id === key || keyOf(theme.title) === key)
 }
 
+/** Themes a typed name could mean: those whose id or title starts with it, else those that contain it. */
+function themeHints(text: string): Theme[] {
+  const key = keyOf(text)
+  if (key === '') return []
+  const starts = THEMES.filter(theme => theme.id.startsWith(key) || keyOf(theme.title).startsWith(key))
+  return starts.length > 0 ? starts : THEMES.filter(theme => theme.id.includes(key) || keyOf(theme.title).includes(key))
+}
+
 function inPool(theme: Theme, pool: Pool): boolean {
   return pool === 'all' || theme.window === pool
 }
 
+/** A random theme from the pool, not `not`. Only the scene about to be shown is built to check it draws. */
 function pickRandom(pool: Pool, not: string | undefined): Theme {
-  const choices = THEMES.filter(theme => inPool(theme, pool) && theme.id !== not && sceneFault(theme) === undefined)
-  return choices[Math.floor(Math.random() * choices.length)] ?? (THEMES[0] as Theme)
+  let choices = THEMES.filter(theme => inPool(theme, pool) && theme.id !== not)
+  while (choices.length > 0) {
+    const theme = choices[Math.floor(Math.random() * choices.length)] as Theme
+    if (sceneFault(theme) === undefined) return theme
+    choices = choices.filter(other => other !== theme)
+  }
+  return THEMES[0] as Theme
 }
 
+/** The settings, or a rejection when the store can't be read. For the paths that must not guess "on". */
+async function readSettings($: EngineInterface): Promise<Settings> {
+  const stored = (await $.store.get(SETTINGS)) as Partial<Settings> | undefined
+  return { ...DEFAULTS, ...(stored ?? {}) }
+}
+
+/** The settings, with the defaults when the store can't be read: for replies and drawing, never for the background tick. */
 async function loadSettings($: EngineInterface): Promise<Settings> {
   try {
-    const stored = (await $.store.get(SETTINGS)) as Partial<Settings> | undefined
-    return { ...DEFAULTS, ...(stored ?? {}) }
+    return await readSettings($)
   } catch {
     return DEFAULTS
   }
+}
+
+/** Whether shuffle is on for blocking theme-examples; a failed read counts as off, so a person's own pick goes through. */
+async function isOnForSure($: EngineInterface): Promise<boolean> {
+  return (await readSettings($).catch(() => undefined))?.on === true
 }
 
 async function saveSettings($: EngineInterface, settings: Settings): Promise<void> {
@@ -116,16 +142,22 @@ async function show($: EngineInterface, theme: Theme): Promise<void> {
     backdrop: { scene: theme.id, id: theme.id, glass: theme.glass },
     overrideColorScheme: theme.window,
   }
+  let result: Awaited<ReturnType<EngineInterface['theme']['set']>>
   try {
-    await $.theme.set(theme.sound === undefined ? base : { ...base, sound: theme.sound })
-  } catch {
+    result = await $.theme.set(theme.sound === undefined ? base : { ...base, sound: theme.sound })
+  } catch (error) {
+    void $.ui.log(`theme-shuffle: ${theme.id} set with sound refused (or this app takes no sound): ${String(error)}`, {
+      to: 'debug',
+    })
     try {
-      await $.theme.set(base)
-    } catch {
+      result = await $.theme.set(base)
+    } catch (again) {
       // An app that takes no window kind beside the backdrop: the backdrop alone.
-      await $.theme.set({ backdrop: base.backdrop })
+      void $.ui.log(`theme-shuffle: ${theme.id} set with window kind refused: ${String(again)}`, { to: 'debug' })
+      result = await $.theme.set({ backdrop: base.backdrop })
     }
   }
+  if (result.isDrawn === false) void $.ui.log(`theme-shuffle: ${theme.id} not drawn: ${result.reason}`, { to: 'debug' })
   shown = theme.id
 }
 
@@ -145,7 +177,8 @@ async function choose($: EngineInterface, settings: Settings, named?: Theme): Pr
 async function sync($: EngineInterface): Promise<void> {
   // A preview owns this session's backdrop until it ends.
   if (previewEnding !== undefined) return
-  const settings = await loadSettings($)
+  // A failed read skips this tick (quietly logs it) rather than guessing "on" over a person's own theme.
+  const settings = await readSettings($)
   if (!settings.on) {
     shown = undefined
     return
@@ -155,8 +188,8 @@ async function sync($: EngineInterface): Promise<void> {
   const theme = themeOf(current?.id)
   const expired = now - (current?.at ?? 0) >= settings.minutes * 60_000
   if (theme === undefined) {
-    // A theme a newer copy of this mod added: leave it be until its time is up, rather than overwrite it.
-    if (current !== undefined && !expired) return
+    // A theme a newer copy of this mod added: leave it be while held or until its time is up, rather than overwrite it.
+    if (current !== undefined && (settings.hold || !expired)) return
     await show($, await choose($, settings))
     return
   }
@@ -174,11 +207,23 @@ const HELP =
   `/${COMMAND} list (pick on a card) | now | hold | on | off | <minutes> | light | dark | all | <theme name>. ` +
   'Applies to every session and project. Running /custom-theme turns shuffle off so your pick works.'
 
-function describe(s: Settings, current: Theme | undefined): string {
-  if (!s.on) return 'Shuffle is off. /custom-theme works again; the current backdrop stays until you pick one.'
+/** The status in a line. `nextInMs`: time until the next switch, said only where it is known to be right. */
+function describe(s: Settings, current: Theme | undefined, nextInMs?: number): string {
+  if (!s.on) return `Shuffle is off; the current backdrop stays and /custom-theme can pick. /${COMMAND} on starts it again.`
   const title = current === undefined ? 'the current theme' : current.title
   if (s.hold) return `Holding ${title} in every session. /${COMMAND} on starts shuffling again.`
-  return `Shuffling every ${s.minutes} min (${s.pool} themes) in every session. Now: ${title}.`
+  const next =
+    nextInMs !== undefined && current !== undefined && inPool(current, s.pool)
+      ? ` Next switch in about ${Math.max(1, Math.ceil(nextInMs / 60_000))} min.`
+      : ''
+  return `Shuffling every ${s.minutes} min (${s.pool} themes) in every session. Now: ${title}.${next}`
+}
+
+/** Milliseconds until the shared theme is due, from the stored record. */
+async function nextIn($: EngineInterface, minutes: number): Promise<number | undefined> {
+  const current = await loadCurrent($)
+  if (current === undefined) return undefined
+  return current.at + minutes * 60_000 - (await $.clock.now())
 }
 
 /** Shows a theme everywhere. `hold`: keep it; otherwise the shuffle carries on from it. */
@@ -205,8 +250,12 @@ async function endPreview($: EngineInterface): Promise<void> {
   const settings = await loadSettings($)
   const current = themeOf((await loadCurrent($))?.id)
   if (settings.on && current !== undefined) await show($, current)
-  else if (lastSet !== undefined) await $.theme.set(lastSet)
-  else await $.theme.clear()
+  else {
+    const back: LastTheme = await read($, last)
+    // Stored from a theme.set hook's own input, so it is a set's attributes.
+    if (back.set !== undefined) await $.theme.set(back.set as Parameters<EngineInterface['theme']['set']>[0])
+    else await $.theme.clear()
+  }
 }
 
 /**
@@ -229,20 +278,29 @@ async function preview($: EngineInterface, theme: Theme): Promise<void> {
 }
 
 async function putCardAway($: EngineInterface): Promise<void> {
-  await update($, card, (): CardState => ({ inBand: false, away: true }))
+  await update($, card, (was: CardState): CardState => ({ inBand: false, away: true, row: was.row }))
 }
 
 /** A pick on the card: the theme shown everywhere, and the card put away, as a menu closes on a choice. */
 async function pickOnCard($: EngineInterface, theme: Theme, hold: boolean): Promise<void> {
   previewEnding?.cancel()
   previewEnding = undefined
+  let wasOn: boolean
+  let after: Settings
   try {
-    await showEverywhere($, theme, hold)
+    wasOn = (await loadSettings($)).on
+    after = await showEverywhere($, theme, hold)
   } catch (error) {
     void $.ui.toast(`${theme.title} could not be shown: ${String(error)}`)
     return
   }
-  void $.ui.toast(hold ? `Holding ${theme.title} in every session.` : `${theme.title} in every session; the shuffle carries on.`)
+  void $.ui.toast(
+    hold
+      ? `Holding ${theme.title} in every session.${wasOn ? '' : ' Theme shuffle is on again.'}`
+      : wasOn
+        ? `${theme.title} in every session; the shuffle carries on.`
+        : `${theme.title} in every session. Theme shuffle is on again: next switch in ${after.minutes} min.`,
+  )
   await putCardAway($)
 }
 
@@ -298,7 +356,20 @@ function cardView(
         >
           {toggleWord}
         </Button>
-        <Button key="close" label="Close" role="dismiss" autoFocus onPress={() => putCardAway($)}>
+        <Button
+          key="close"
+          label="Close"
+          role="dismiss"
+          autoFocus
+          onPress={async () => {
+            // Closing the card also ends a running preview, so it can't outlive the card unseen.
+            try {
+              if (previewEnding !== undefined) await endPreview($)
+            } finally {
+              await putCardAway($)
+            }
+          }}
+        >
           Close
         </Button>
       </Box>
@@ -364,6 +435,15 @@ export const register: Register = on => {
     } catch (error) {
       void $.ui.log(`theme-shuffle: /${COMMAND} not available (${String(error)})`)
     }
+    // A reload stops the preview's timer but the card's state stays: drop a stale "Previewing" line.
+    // Never clear or set the theme here: a clear at a reload wipes whatever theme stands.
+    previewEnding?.cancel()
+    previewEnding = undefined
+    quietly($, () =>
+      update($, card, (was: CardState): CardState =>
+        was.preview === undefined && was.left === undefined ? was : { ...was, preview: undefined, left: undefined },
+      ),
+    )
     ticker?.cancel()
     ticker = $.clock.every(TICK_MS, () => {
       quietly($, () => sync($))
@@ -385,21 +465,23 @@ export const register: Register = on => {
 
   // While the mod drives the backdrop, theme-examples' own sets and clears are held, so the two never fight.
   on('theme.set', async ($, e, next) => {
-    if (next.origin.plugin === PICKER && (await loadSettings($)).on) {
+    if (next.origin.plugin === PICKER && (await isOnForSure($))) {
       return { isDrawn: false, reason: `theme-shuffle is on. Run /${COMMAND} off to pick your own theme.` }
     }
     const result = await next(e)
     // Remembered so a preview can go back to it; a preview's own set is not.
-    if (result.isDrawn && previewEnding === undefined) lastSet = e
+    if (result.isDrawn && previewEnding === undefined) {
+      await update($, last, (): LastTheme => ({ set: e })).catch(() => undefined)
+    }
     return result
   })
 
   on('theme.clear', async ($, e, next) => {
-    if (next.origin.plugin === PICKER && (await loadSettings($)).on) {
+    if (next.origin.plugin === PICKER && (await isOnForSure($))) {
       return { isDrawn: false, reason: `theme-shuffle is on. Run /${COMMAND} off to clear it.` }
     }
     const result = await next(e)
-    if (previewEnding === undefined) lastSet = undefined
+    if (previewEnding === undefined) await update($, last, (): LastTheme => ({})).catch(() => undefined)
     return result
   })
 
@@ -423,7 +505,7 @@ export const register: Register = on => {
     if (theme === undefined) return next(e)
     const { Svg, Shader } = $.ui.resolve(e)
     // A live theme is drawn fresh from this session's figures; reading the atom redraws it when they change.
-    const source = theme.live === undefined ? sceneOf(theme) : theme.live(await read($, usage))
+    const source = theme.live === undefined ? sceneOf(theme) : theme.live(await read($, usage), await $.clock.now())
     return overShader(
       Shader,
       theme.shader,
@@ -432,15 +514,17 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Placed' }, async ($, e, next) => {
-    if (e.props.plugin !== PLUGIN || e.props.id !== CARD) return next(e)
+    if (e.props.plugin !== PLUGIN || !String(e.props.id).startsWith(CARD)) return next(e)
     const state: CardState = await read($, card)
-    if (state.away === true) return next(e)
+    // Only the newest card row draws; older ones (from an earlier list) draw nothing.
+    if (state.away === true || e.props.id !== (state.row ?? CARD)) return next(e)
     return cardView($, $.ui.resolve(e), await loadSettings($), (await loadCurrent($))?.id, state)
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const state: CardState = await read($, card)
-    if (state.inBand !== true) return next(e)
+    // A survey holds the band; the card yields to it.
+    if (state.inBand !== true || e.props.hasSurvey) return next(e)
     return cardView($, $.ui.resolve(e), await loadSettings($), (await loadCurrent($))?.id, state)
   })
 
@@ -448,19 +532,25 @@ export const register: Register = on => {
     const word = e.args.trim().toLowerCase()
     const settings = await loadSettings($)
 
-    if (word === '') return { text: `${describe(settings, themeOf((await loadCurrent($))?.id))} ${HELP}` }
+    if (word === '') {
+      const current = themeOf((await loadCurrent($))?.id)
+      return { text: `${describe(settings, current, await nextIn($, settings.minutes))} ${HELP}` }
+    }
 
     if (word === 'list' || word === 'pick') {
-      // A surface that places no rows gets the card above the prompt instead.
-      const placed = await $.ui.place({ id: CARD })
-      await update($, card, (): CardState => ({ inBand: !placed.isPlaced, away: false }))
-      return { text: 'Pick a theme on the card.' }
+      // A fresh row each time, so the card opens at the end of the transcript, not where an earlier one stood.
+      const row = `${CARD}-${Date.now().toString(36)}`
+      const placed = await $.ui.place({ id: row })
+      // A row waiting for a surface to attach (a requestId, not placed) draws there later; only no row at all uses the band.
+      const inRow = placed.isPlaced || placed.requestId !== undefined
+      await update($, card, (): CardState => ({ inBand: !inRow, away: false, row }))
+      return { text: inRow ? 'Theme shuffle card is open below.' : 'Theme shuffle card is open above the prompt.' }
     }
 
     const named = themeNamed(word)
     if (named !== undefined) {
       const after = await showEverywhere($, named, false)
-      return { text: describe(after, named) }
+      return { text: describe(after, named, after.minutes * 60_000) }
     }
 
     let changed: Settings
@@ -469,7 +559,22 @@ export const register: Register = on => {
     else if (word === 'on' || word === 'now') changed = { ...settings, on: true, hold: false }
     else if (word === 'light' || word === 'dark' || word === 'all') changed = { ...settings, pool: word, on: true, hold: false }
     else if (/^\d+(\.\d+)?$/.test(word) && Number(word) >= 1) changed = { ...settings, minutes: Number(word), on: true, hold: false }
-    else return { text: `No option or theme "${word}". ${HELP}` }
+    else if (/^\d+(\.\d+)?$/.test(word)) return { text: `Minutes must be 1 or more, e.g. /${COMMAND} 10.` }
+    else {
+      const hints = themeHints(word)
+      if (hints.length === 1) {
+        const only = hints[0] as Theme
+        const after = await showEverywhere($, only, false)
+        return { text: describe(after, only, after.minutes * 60_000) }
+      }
+      if (hints.length > 1) {
+        const some = hints.slice(0, 3).map(theme => theme.title).join(', ')
+        return { text: `No theme "${word}". Did you mean: ${some}? /${COMMAND} list shows them all.` }
+      }
+      return {
+        text: `No option or theme "${word}". /${COMMAND} list shows the themes; options: now, hold, on, off, <minutes>, light, dark, all.`,
+      }
+    }
 
     await saveSettings($, changed)
     if (!changed.on) {
@@ -477,13 +582,17 @@ export const register: Register = on => {
       return { text: describe(changed, undefined) }
     }
 
-    // A new pick for "now", a different pool, or turning it back on; else keep the timing.
-    const fresh = word === 'now' || !settings.on || changed.pool !== settings.pool
-    const theme = fresh ? await choose($, changed) : themeOf((await loadCurrent($))?.id)
+    // Hold keeps the theme on screen (the shared one), picking only when there is none it knows.
+    // Else a new pick for "now", a different pool, or turning it back on; otherwise keep the timing.
+    const kept = themeOf((await loadCurrent($))?.id)
+    const fresh = word === 'now' || (word === 'hold' ? kept === undefined : !settings.on || changed.pool !== settings.pool)
+    const theme = fresh ? await choose($, changed) : kept
     if (theme !== undefined) {
-      shown = fresh ? undefined : shown
+      shown = fresh || !settings.on ? undefined : shown
       await show($, theme)
     }
-    return { text: describe(changed, theme) }
-  })
+    return { text: describe(changed, theme, await nextIn($, changed.minutes)) }
+  }).catch(($, e, next) => ({
+    text: `theme-shuffle could not finish (${next.error.message ?? next.error.kind}). Run /${COMMAND} to see what is set now. ${HELP}`,
+  }))
 }
