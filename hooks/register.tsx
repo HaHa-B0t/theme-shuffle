@@ -157,7 +157,12 @@ async function show($: EngineInterface, theme: Theme): Promise<void> {
       result = await $.theme.set({ backdrop: base.backdrop })
     }
   }
-  if (result.isDrawn === false) void $.ui.log(`theme-shuffle: ${theme.id} not drawn: ${result.reason}`, { to: 'debug' })
+  if (result.isDrawn === false) {
+    // Not drawn: leave `shown` unset, so the next 15 s tick tries again instead of believing it is up.
+    void $.ui.log(`theme-shuffle: ${theme.id} not drawn: ${result.reason}`, { to: 'debug' })
+    shown = undefined
+    return
+  }
   shown = theme.id
 }
 
@@ -469,6 +474,9 @@ export const register: Register = on => {
       return { isDrawn: false, reason: `theme-shuffle is on. Run /${COMMAND} off to pick your own theme.` }
     }
     const result = await next(e)
+    // Another plugin's theme now stands in this session: forget what this mod showed, so while shuffle is on the
+    // next tick puts the shared theme back instead of believing it is still up.
+    if (result.isDrawn && next.origin.plugin !== PLUGIN) shown = undefined
     // Remembered so a preview can go back to it; a preview's own set is not.
     if (result.isDrawn && previewEnding === undefined) {
       await update($, last, (): LastTheme => ({ set: e })).catch(() => undefined)
@@ -481,6 +489,7 @@ export const register: Register = on => {
       return { isDrawn: false, reason: `theme-shuffle is on. Run /${COMMAND} off to clear it.` }
     }
     const result = await next(e)
+    shown = undefined
     if (previewEnding === undefined) await update($, last, (): LastTheme => ({})).catch(() => undefined)
     return result
   })
@@ -533,6 +542,11 @@ export const register: Register = on => {
     const settings = await loadSettings($)
 
     if (word === '') {
+      // Asking for the status also puts the shared theme back up here, in case this session fell out of step.
+      if (settings.on && previewEnding === undefined) {
+        shown = undefined
+        quietly($, () => sync($))
+      }
       const current = themeOf((await loadCurrent($))?.id)
       return { text: `${describe(settings, current, await nextIn($, settings.minutes))} ${HELP}` }
     }
